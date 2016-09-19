@@ -71,14 +71,14 @@ int nPATCHES;
 
 // functions
 int getAndSetRNGseed(void);
-void migration(int *genotypeCounts);
+void migration(int *genotypeCounts, int *nInEachPatch);
 void parseCommandLine(int argc, char *argv[], char *progname);
 void printParametersToFile(long int t, int nSamplesGot, int seed);
 void recordData(long int t);
-void reproduction(void);
+void reproduction(int *genotypeCounts, double *fitnesses, int *nInEachPatch);
 int myRound(double x);
 int seed_gen(void);
-void setUpPopulationAndDataFiles(int *genotypeCounts, int *nInEachPatch);
+void setUpPopulationAndDataFiles(int *genotypeCounts, int *nInEachPatch, double *fitnesses);
 double singleLocusEquilibrium(double s, double m);
 void usage(char *progname);
 
@@ -98,9 +98,10 @@ main(int argc, char *argv[])
     // core data structures:
     int genotypeCounts[(nPATCHES * nGENOTYPES)]; // homo, het, other homo for each deme
     int nInEachPatch[nPATCHES]; // count of total individuals in each patch
+    double fitnesses[(nPATCHES * nGENOTYPES)];
     
     // initialize population:
-    setUpPopulationAndDataFiles( genotypeCounts, nInEachPatch );
+    setUpPopulationAndDataFiles( genotypeCounts, nInEachPatch, fitnesses );
 
     // main loop of work
     int nSamplesGot = 0;
@@ -108,8 +109,8 @@ main(int argc, char *argv[])
     do {
         
         t++;            // increment generation
-        migration( genotypeCounts );
-        reproduction(); // according to fitness; soft selection
+        migration( genotypeCounts, nInEachPatch );
+        reproduction( genotypeCounts, fitnesses, nInEachPatch ); // according to fitness; soft selection
         
         if ( ((t % TS_RECORDING_FREQ) == 0) && (t > BURN_IN_PERIOD) ) {
             recordData( t );
@@ -120,6 +121,15 @@ main(int argc, char *argv[])
     
     // record metadata:
     printParametersToFile(t, nSamplesGot, seed);
+    
+    // /*  check test
+    int *ipt, i;
+    ipt = genotypeCounts;
+    for ( i = 0; i < nPATCHES; i++ ) {
+        fprintf(stdout, "%i\t%i\t%i\t%i\t%i\n", *ipt, *(ipt+1), *(ipt+2), (*ipt + *(ipt+1) + *(ipt+2)), nInEachPatch[i]);
+        ipt += nGENOTYPES;
+    }
+    // end check test */
     
     return 0;
 }
@@ -163,10 +173,10 @@ getAndSetRNGseed(void)
 
 
 void
-migration(int *genotypeCounts)
+migration(int *genotypeCounts, int *nInEachPatch)
 {
     int i, j, leaving[nPATCHES][nGENOTYPES], joining[nPATCHES][nGENOTYPES];
-    int *ipt1, destination;
+    int *ipt, destination, newTot;
     
     
     if ( !TWO_DEME ) {
@@ -174,19 +184,43 @@ migration(int *genotypeCounts)
         exit(-1);
     }
     
-    ipt1 = genotypeCounts;
+    ipt = genotypeCounts;
     for ( i = 0; i < nPATCHES; i++ ) {
         if (i == 1)
             destination = 0;
         else
             destination = 1;
         for ( j = 0; j < nGENOTYPES; j++ ) {
-            leaving[i][j] = gsl_ran_binomial( rngState, SD_MOVE, *(ipt1 + j) );
+            leaving[i][j] = gsl_ran_binomial( rngState, SD_MOVE, *(ipt + j) );
             joining[destination][j] = leaving[i][j];
         }
-        ipt1 += nGENOTYPES;
+        ipt += nGENOTYPES;
     }
     
+    ipt = genotypeCounts;
+    newTot = 0;
+    for ( i = 0; i < nPATCHES; i++ ) {
+        for ( j = 0; j < nGENOTYPES; j++ ) {
+            *(ipt + j) = *(ipt + j) + joining[i][j] - leaving[i][j];
+            if ( *(ipt + j) < 0 ) {
+                fprintf(stderr, "\nError in migration()! Negative individuals!\n");
+                exit(-1);
+            }
+            newTot += *(ipt + j);
+        }
+        
+        // update number in each patch
+        nInEachPatch[i] = 0;
+        for ( j = 0; j < nGENOTYPES; j++ )
+            nInEachPatch[i] = nInEachPatch[i] + *(ipt + j);
+        
+        // increment pointer
+        ipt += nGENOTYPES;
+    }
+    if ( newTot != N ) {
+        fprintf(stderr, "\nError in migration():\n\tNumbers do NOT add up!\n\tnewTot = %i, N = %i\n", newTot, N);
+        exit(-1);
+    }
     
     
 }
@@ -292,6 +326,14 @@ parseCommandLine(int argc, char *argv[], char *progname)
         exit(-1);
     }
     nPATCHES = pow(PATCHES,DIM);
+    if ( TWO_DEME ) {
+        if ( nPATCHES > 2 ) {
+            fprintf(stdout, "\nWarning: nPATCHES set to 2, DIM set to 1, because TWO_DEME mode turned on and overrode other options...\n");
+        }
+        PATCHES = 2;
+        nPATCHES = 2;
+        DIM = 1;
+    }
     
     if ( S_COEFF < 0.0 ) {
         fprintf(stderr, "\nError in parameter choices (-s):\n\tS_COEFF (= %f) should be >= 0.0\n", S_COEFF);
@@ -348,8 +390,44 @@ recordData(long int t)
 
 
 void
-reproduction(void)
+reproduction(int *genotypeCounts, double *fitnesses, int *nInEachPatch)
 {
+    double fitnessWeights[nPATCHES][nGENOTYPES], *dpt, fitTotal, a, b, c;
+    int i, j, *ipt;
+    int newCounts[(nPATCHES * nGENOTYPES)];
+    
+    ipt = genotypeCounts;
+    dpt = fitnesses;
+    
+    for ( i = 0; i < nPATCHES; i++ ) {
+        fitTotal = 0.0;
+        // calculate raw weights:
+        for ( j = 0; j < nGENOTYPES; j++ ) {
+            fitnessWeights[i][j] = ((double) *(ipt + j)) * (*(dpt + j));
+            fitTotal += fitnessWeights[i][j];
+        }
+        // normalize to sum to one to make them probabilities:
+        for ( j = 0; j < nGENOTYPES; j++ )
+            fitnessWeights[i][j] = fitnessWeights[i][j] / fitTotal;
+        
+        if ( nGENOTYPES > 3 ) {
+            fprintf(stderr, "\nError in reproduction: scheme assumes three genotypes total!  Sorry!\n");
+            exit(-1);
+        }
+        
+        a = fitnessWeights[i][0];
+        b = fitnessWeights[i][1];
+        c = fitnessWeights[i][2];
+        
+        *ipt = myRound( ((a * a) + (a * b) + (0.25 * b * b)) * ((double) nInEachPatch[i]) );
+        *(ipt + 2) = myRound( ((0.25 * b * b) + (b * c) + (c * c)) * ((double) nInEachPatch[i]) );
+        *(ipt + 1) = nInEachPatch[i] - ( *ipt + (*(ipt + 2)) );
+        
+        // increment pointers:
+        ipt += nGENOTYPES;
+        dpt += nGENOTYPES;
+    }
+    
     
 }
 
@@ -385,7 +463,7 @@ seed_gen(void)
 
 
 void
-setUpPopulationAndDataFiles(int *genotypeCounts, int *nInEachPatch )
+setUpPopulationAndDataFiles(int *genotypeCounts, int *nInEachPatch, double *fitnesses )
 {
     int i, j, *ipt, hereNow, totSoFar, midIndex;
     double q1, q0, p1, p0, puse, nPerPatch;
@@ -441,6 +519,17 @@ setUpPopulationAndDataFiles(int *genotypeCounts, int *nInEachPatch )
         ipt += nGENOTYPES;
     }
     // end check test */
+    
+    if ( !TWO_DEME ) {
+        fprintf(stderr, "\nError in setting up fitnesses: not configured for anything except two deme!  Sorry!\n");
+        exit(-1);
+    }
+    fitnesses[0] = 1.0 + S_COEFF;
+    fitnesses[1] = 1.0 + ( (1.0 - H) * S_COEFF );
+    fitnesses[2] = 1.0;
+    fitnesses[3] = 1.0;
+    fitnesses[4] = 1.0 + ( H * S_COEFF );
+    fitnesses[5] = 1.0 + S_COEFF;
     
 }
 
