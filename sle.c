@@ -70,10 +70,13 @@ int N;
 int nPATCHES;
 
 // functions
+void getAndSetRNGseed(void);
 void migration(void);
 void parseCommandLine(int argc, char *argv[], char *progname);
+void printParametersToFile(long int t, int nSamplesGot);
 void recordData(long int t);
 void reproduction(void);
+int seed_gen(void);
 void setUpPopulationAndDataFiles(void);
 void usage(char *progname);
 
@@ -85,6 +88,8 @@ main(int argc, char *argv[])
     // read in optional command line arguments ...
     char *progname = argv[0];
     parseCommandLine(argc, argv, progname);
+    
+    getAndSetRNGseed();
     
     setUpPopulationAndDataFiles();
     
@@ -104,8 +109,38 @@ main(int argc, char *argv[])
         
     } while ( nSamplesGot < nSAMPLES_TO_GET );
     
+    printParametersToFile(t, nSamplesGot);
     
     return 0;
+}
+
+
+void
+getAndSetRNGseed(void)
+{
+    if (DETERMINISTIC) {
+        int seed, rcount;
+        FILE *fpt;
+        fpt = fopen("RnumSeed.txt","r");
+        if (fpt == NULL) {
+            perror("Can't open RnumSeed.txt");
+            exit(-1);
+        }
+        
+        rcount = fscanf(fpt,"%i",&seed);
+        if ( rcount ) {
+            seedRand(seed);	// fixed random number seed
+            fclose(fpt);
+        }
+        else {
+            fprintf(stderr, "\n\n\tError! nothing read from file! Exiting!\n\n");
+            exit(-1);
+        }
+        //fprintf(stderr, "\n\nSeed = %i\n\n",seed);
+    }
+    else {
+        seedRand(seed_gen());	// get random number seed (system time)
+    }
 }
 
 
@@ -121,7 +156,7 @@ parseCommandLine(int argc, char *argv[], char *progname)
 {
     _Bool burnInSetByUser = 0;
     int ch;
-    while ((ch = getopt(argc, argv, "B:D:d:F:H:K:M:m:N:n:O:P:s:T:?")) != -1) {
+    while ((ch = getopt(argc, argv, "B:D:d:F:H:K:M:m:N:n:O:P:s:T:t:?")) != -1) {
         switch (ch) {
             case 'B':
                 BURN_IN_PERIOD = atoi(optarg);
@@ -165,6 +200,9 @@ parseCommandLine(int argc, char *argv[], char *progname)
                 break;
             case 'T':
                 TWO_DEME = atoi(optarg);
+                break;
+            case 't':
+                TS_RECORDING_FREQ = atoi(optarg);
                 break;
             case '?':
             default:
@@ -213,10 +251,47 @@ parseCommandLine(int argc, char *argv[], char *progname)
     nPATCHES = pow(PATCHES,DIM);
     
     if ( S_COEFF < 0.0 ) {
-        fprintf(stderr, "\nError in parameter choices (-s):\n\tnS_COEFF (= %f) should be >= 0.0\n", S_COEFF);
+        fprintf(stderr, "\nError in parameter choices (-s):\n\tS_COEFF (= %f) should be >= 0.0\n", S_COEFF);
         exit(-1);
     }
     
+    if ( TS_RECORDING_FREQ < 1 ) {
+        fprintf(stderr, "\nError in parameter choices (-t):\n\tTS_RECORDING_FREQ (= %i) should be >= 0.0\n", TS_RECORDING_FREQ);
+        exit(-1);
+    }
+    
+}
+
+void
+printParametersToFile(long int t, int nSamplesGot)
+{
+    FILE *pp;
+    
+    pp = fopen("parameters.m", "w"); // plain text; ready to read by MATLAB
+    
+    fprintf(pp, "codeVersion = %s\n", version);
+    fprintf(pp, "BURN_IN_PERIOD = %i;\n", BURN_IN_PERIOD);
+    fprintf(pp, "DIM = %i;\n", DIM);
+    fprintf(pp, "DETERMINISTIC = %i;\n", DETERMINISTIC);
+    fprintf(pp, "FIXED_N = %i;\n", FIXED_N);
+    fprintf(pp, "H = %E;\n", H);
+    fprintf(pp, "K = %E;\n", K);
+    fprintf(pp, "MOSAIC = %i;\n", MOSAIC);
+    fprintf(pp, "SD_MOVE = %E;\n", SD_MOVE);
+    fprintf(pp, "INITIAL_POPULATION_SIZE = %i;\n", INITIAL_POPULATION_SIZE);
+    fprintf(pp, "nSAMPLES_TO_GET = %i;\n", nSAMPLES_TO_GET);
+    fprintf(pp, "OFFSPRING_IN_RANDOM_LOCATIONS = %i;\n", OFFSPRING_IN_RANDOM_LOCATIONS);
+    fprintf(pp, "PATCHES = %i;\n", PATCHES);
+    fprintf(pp, "nPATCHES = %i;\n", nPATCHES);
+    fprintf(pp, "S_COEFF = %E;\n", S_COEFF);
+    fprintf(pp, "TWO_DEME = %i;\n", TWO_DEME);
+    fprintf(pp, "TS_RECORDING_FREQ = %i;\n", TS_RECORDING_FREQ);
+    
+    fprintf(pp, "\nN = %i;\n", N);
+    fprintf(pp, "t = %li;\n", t);
+    fprintf(pp, "nSamplesGot = %i;\n", nSamplesGot);
+    
+    fclose(pp);
 }
 
 
@@ -231,6 +306,29 @@ void
 reproduction(void)
 {
     
+}
+
+
+int
+seed_gen(void)
+{
+    /* use calendar time to seed random number generator.  Code adopted from Schildt's textbook */
+    
+    int stime;
+    long ltime;
+    FILE *rseed;
+    
+    /* get the calendar time */
+    ltime=time(NULL);
+    stime=(unsigned) ltime/2;
+    
+    
+    // generate and store random number seed
+    rseed = fopen("RnumSeed.txt","w");
+    fprintf(rseed,"%i\n",stime);
+    fclose(rseed);
+    
+    return stime;
 }
 
 
@@ -273,6 +371,9 @@ usage(char *progname)
     fprintf(stdout, "\n\t-s <num>\tSelection coefficient.  Should be > 0.\n\t\t\tDefault is %f\n", S_COEFF_DEFAULT);
     
     fprintf(stdout, "\n\t-T <1 or 0>\tTwo-deme mode or not.  '0' = continuous space.\n\t\t\t'1' = two-deme, discrete-space model.\n\t\t\tDefault is %i\n", TWO_DEME_DEFAULT);
+    
+    fprintf(stdout, "\n\t-t <int>\tTime sampling recording interval.\n\t\t\tDefault is %i\n", TS_RECORDING_FREQ_DEFAULT);
+    
 }
 
 
