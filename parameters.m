@@ -1,4 +1,5 @@
 codeVersion = sle_1.0
+RnumSeed = 737153419
 BURN_IN_PERIOD = 20000;
 DIM = 1;
 DETERMINISTIC = 1;

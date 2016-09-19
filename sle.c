@@ -19,22 +19,17 @@ const char *version = "sle_1.0";
 #include <string.h>
 #include <sys/types.h>
 #include <sys/stat.h>
-
-#include "../MT/dSFMT.h"
+#include <gsl_rng.h>            // gnu scientific library //
+#include <gsl_randist.h>        // gnu scientific library //
+const gsl_rng_type *rngType;    /* generator type */
+gsl_rng *rngState; /* rng instance */
 
 int loci_count_0 = 0;
 int loci_count_1 = 0;
 int loci_count_2 = 0;
 int loci_count_many = 0;
 
-// code for using Mersenne Twister RNG
-dsfmt_t dsfmt;
-#define seedRand(s) dsfmt_init_gen_rand(&dsfmt, s)
-#define	randU() dsfmt_genrand_close_open(&dsfmt)
-#define	randI() (unsigned)dsfmt_genrand_uint32(&dsfmt)
-
-
-// constants that have to be set here in source code
+// constants or defaults
 #define DIM_DEFAULT 1 // dimensionality of habitat; set to 1 or 2
 #define PATCHES_DEFAULT 2 // number of patches across the habitat in a single dimension; see also nPATCHES below, which is the actual number = PATCHES^D
 #define TWO_DEME_DEFAULT 1 // if this is 1, then D above should be 1 and PATCHES should be 2, and space will be treated as discrete rather than as continuous
@@ -49,6 +44,11 @@ dsfmt_t dsfmt;
 #define OIRL_DEFAULT 1 // offspring in random locations or not
 #define TS_RECORDING_FREQ_DEFAULT 500 // generation interval for recording
 #define nSAMPLES_TO_GET_DEFAULT 1000 // how many samples to get
+
+// magic numbers
+#define nGENOTYPES 3
+#define DIPLOID 2
+
 
 // globals
 int DIM = DIM_DEFAULT;
@@ -71,7 +71,7 @@ int nPATCHES;
 
 // functions
 int getAndSetRNGseed(void);
-void migration(void);
+void migration(int *genotypeCounts);
 void parseCommandLine(int argc, char *argv[], char *progname);
 void printParametersToFile(long int t, int nSamplesGot, int seed);
 void recordData(long int t);
@@ -96,7 +96,7 @@ main(int argc, char *argv[])
     seed = getAndSetRNGseed();
 
     // core data structures:
-    int genotypeCounts[(nPATCHES * 3)]; // homo, het, other homo for each deme
+    int genotypeCounts[(nPATCHES * nGENOTYPES)]; // homo, het, other homo for each deme
     int nInEachPatch[nPATCHES]; // count of total individuals in each patch
     
     // initialize population:
@@ -108,7 +108,7 @@ main(int argc, char *argv[])
     do {
         
         t++;            // increment generation
-        migration();
+        migration( genotypeCounts );
         reproduction(); // according to fitness; soft selection
         
         if ( ((t % TS_RECORDING_FREQ) == 0) && (t > BURN_IN_PERIOD) ) {
@@ -141,7 +141,6 @@ getAndSetRNGseed(void)
         
         rcount = fscanf(fpt,"%i",&seed);
         if ( rcount ) {
-            seedRand(seed);	// fixed random number seed
             fclose(fpt);
         }
         else {
@@ -152,15 +151,43 @@ getAndSetRNGseed(void)
     }
     else {
         seed = seed_gen();
-        seedRand(seed);	// get random number seed (system time)
     }
+    
+    gsl_rng_env_setup(); // set up the environment variables for the RNG
+    rngType = gsl_rng_mt19937; // Mersenne Twister// for default you can say T = gsl_rng_default;
+    rngState = gsl_rng_alloc(rngType);
+    gsl_rng_set(rngState, seed); // initialize
+    
     return seed;
 }
 
 
 void
-migration(void)
+migration(int *genotypeCounts)
 {
+    int i, j, leaving[nPATCHES][nGENOTYPES], joining[nPATCHES][nGENOTYPES];
+    int *ipt1, destination;
+    
+    
+    if ( !TWO_DEME ) {
+        fprintf(stderr, "\nError!  Migration code for scenarios other than two-deme not written yet! Sorry!\n");
+        exit(-1);
+    }
+    
+    ipt1 = genotypeCounts;
+    for ( i = 0; i < nPATCHES; i++ ) {
+        if (i == 1)
+            destination = 0;
+        else
+            destination = 1;
+        for ( j = 0; j < nGENOTYPES; j++ ) {
+            leaving[i][j] = gsl_ran_binomial( rngState, SD_MOVE, *(ipt1 + j) );
+            joining[destination][j] = leaving[i][j];
+        }
+        ipt1 += nGENOTYPES;
+    }
+    
+    
     
 }
 
@@ -399,7 +426,7 @@ setUpPopulationAndDataFiles(int *genotypeCounts, int *nInEachPatch )
         *(ipt + 1) = myRound((2.0 * puse * (1.0 - puse)) * nPerPatch); // heterozygous
         hereNow = (*ipt) + (*(ipt + 1));
         *(ipt + 2) = ((int) nPerPatch) - hereNow; // homozygous derived
-        ipt += 3; // increment genotype pointer
+        ipt += nGENOTYPES; // increment genotype pointer
     }
     nInEachPatch[(nPATCHES - 1)] = N - totSoFar;
     *ipt = myRound((p1 * p1) * ((double) nInEachPatch[(nPATCHES - 1)]));
@@ -411,7 +438,7 @@ setUpPopulationAndDataFiles(int *genotypeCounts, int *nInEachPatch )
     ipt = genotypeCounts;
     for ( i = 0; i < nPATCHES; i++ ) {
         fprintf(stdout, "%i\t%i\t%i\t%i\t%i\n", *ipt, *(ipt+1), *(ipt+2), (*ipt + *(ipt+1) + *(ipt+2)), nInEachPatch[i]);
-        ipt += 3;
+        ipt += nGENOTYPES;
     }
     // end check test */
     
