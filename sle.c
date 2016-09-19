@@ -70,14 +70,16 @@ int N;
 int nPATCHES;
 
 // functions
-void getAndSetRNGseed(void);
+int getAndSetRNGseed(void);
 void migration(void);
 void parseCommandLine(int argc, char *argv[], char *progname);
-void printParametersToFile(long int t, int nSamplesGot);
+void printParametersToFile(long int t, int nSamplesGot, int seed);
 void recordData(long int t);
 void reproduction(void);
+int myRound(double x);
 int seed_gen(void);
-void setUpPopulationAndDataFiles(void);
+void setUpPopulationAndDataFiles(int *genotypeCounts, int *nInEachPatch);
+double singleLocusEquilibrium(double s, double m);
 void usage(char *progname);
 
 
@@ -89,13 +91,20 @@ main(int argc, char *argv[])
     char *progname = argv[0];
     parseCommandLine(argc, argv, progname);
     
-    getAndSetRNGseed();
+    // set up RNG:
+    int seed;
+    seed = getAndSetRNGseed();
+
+    // core data structures:
+    int genotypeCounts[(nPATCHES * 3)]; // homo, het, other homo for each deme
+    int nInEachPatch[nPATCHES]; // count of total individuals in each patch
     
-    setUpPopulationAndDataFiles();
-    
+    // initialize population:
+    setUpPopulationAndDataFiles( genotypeCounts, nInEachPatch );
+
+    // main loop of work
     int nSamplesGot = 0;
     long int t = 0;
-    
     do {
         
         t++;            // increment generation
@@ -109,17 +118,20 @@ main(int argc, char *argv[])
         
     } while ( nSamplesGot < nSAMPLES_TO_GET );
     
-    printParametersToFile(t, nSamplesGot);
+    // record metadata:
+    printParametersToFile(t, nSamplesGot, seed);
     
     return 0;
 }
 
 
-void
+int
 getAndSetRNGseed(void)
 {
+    int seed;
+    
     if (DETERMINISTIC) {
-        int seed, rcount;
+        int rcount;
         FILE *fpt;
         fpt = fopen("RnumSeed.txt","r");
         if (fpt == NULL) {
@@ -139,8 +151,10 @@ getAndSetRNGseed(void)
         //fprintf(stderr, "\n\nSeed = %i\n\n",seed);
     }
     else {
-        seedRand(seed_gen());	// get random number seed (system time)
+        seed = seed_gen();
+        seedRand(seed);	// get random number seed (system time)
     }
+    return seed;
 }
 
 
@@ -238,6 +252,8 @@ parseCommandLine(int argc, char *argv[], char *progname)
         fprintf(stderr, "\nError in parameter choices (-N):\n\tINITIAL_POPULATION_SIZE (= %i) too small!\n", INITIAL_POPULATION_SIZE);
         exit(-1);
     }
+    else
+        N = INITIAL_POPULATION_SIZE;
 
     if ( nSAMPLES_TO_GET < 1 ) {
         fprintf(stderr, "\nError in parameter choices (-n):\n\tnSAMPLES_TO_GET (= %i) should be > 0\n", nSAMPLES_TO_GET);
@@ -256,20 +272,22 @@ parseCommandLine(int argc, char *argv[], char *progname)
     }
     
     if ( TS_RECORDING_FREQ < 1 ) {
-        fprintf(stderr, "\nError in parameter choices (-t):\n\tTS_RECORDING_FREQ (= %i) should be >= 0.0\n", TS_RECORDING_FREQ);
+        fprintf(stderr, "\nError in parameter choices (-t):\n\tTS_RECORDING_FREQ (= %i) should be >= 0\n", TS_RECORDING_FREQ);
         exit(-1);
     }
     
 }
 
 void
-printParametersToFile(long int t, int nSamplesGot)
+printParametersToFile(long int t, int nSamplesGot, int seed)
 {
     FILE *pp;
     
     pp = fopen("parameters.m", "w"); // plain text; ready to read by MATLAB
     
     fprintf(pp, "codeVersion = %s\n", version);
+    fprintf(pp, "RnumSeed = %i\n", seed);
+    
     fprintf(pp, "BURN_IN_PERIOD = %i;\n", BURN_IN_PERIOD);
     fprintf(pp, "DIM = %i;\n", DIM);
     fprintf(pp, "DETERMINISTIC = %i;\n", DETERMINISTIC);
@@ -310,6 +328,13 @@ reproduction(void)
 
 
 int
+myRound(double x)
+{
+    return ((int) (x + 0.5));
+}
+
+
+int
 seed_gen(void)
 {
     /* use calendar time to seed random number generator.  Code adopted from Schildt's textbook */
@@ -333,9 +358,71 @@ seed_gen(void)
 
 
 void
-setUpPopulationAndDataFiles(void)
+setUpPopulationAndDataFiles(int *genotypeCounts, int *nInEachPatch )
 {
+    int i, j, *ipt, hereNow, totSoFar, midIndex;
+    double q1, q0, p1, p0, puse, nPerPatch;
     
+    q1 = singleLocusEquilibrium(S_COEFF, SD_MOVE); // accurate only for two deme; frequency of derived allele where it is favored
+    if ( p1 <= 0.0 || p1 >= 1.0 ) {
+        fprintf(stderr, "\nError in setUpPopulationAndDataFiles():\n\tp1 (= %f) out of bounds!\n", p1);
+        exit(-1);
+    }
+    p1 = 1.0 - q1; // ancestral allele where it is NOT favored
+    
+    p0 = q1; // ancestral allele where it is favored
+    q0 = 1.0 - p0; // derived allele NOT favored
+    
+    if ( (nPATCHES % 2) == 1 )
+        midIndex = (nPATCHES - 1) / 2;
+    else
+        midIndex = nPATCHES/2;
+    
+    
+    nPerPatch = (double) myRound( ((double) N) / ((double) nPATCHES) );
+    fprintf(stdout, "\n%i\t%i\t%f\n", N, nPATCHES, nPerPatch);
+    
+    ipt = genotypeCounts;
+    totSoFar = 0;
+    for ( i = 0; i < (nPATCHES-1); i++ ) {
+        nInEachPatch[i] = (int) nPerPatch; // number here
+        totSoFar += nInEachPatch[i];
+        if ( ((nPATCHES % 2) == 1) && (i == midIndex) )
+            puse = 0.5;
+        else if ( i < (nPATCHES / 2) )
+            puse = p0;  // half of habitat good for ancestral
+        else
+            puse = p1;  // half of habitat good for derived
+        
+        // Use Hardy-Weinberg equilibrium:
+        *ipt = myRound((puse * puse) * nPerPatch); // homozygous ancestral
+        *(ipt + 1) = myRound((2.0 * puse * (1.0 - puse)) * nPerPatch); // heterozygous
+        hereNow = (*ipt) + (*(ipt + 1));
+        *(ipt + 2) = ((int) nPerPatch) - hereNow; // homozygous derived
+        ipt += 3; // increment genotype pointer
+    }
+    nInEachPatch[(nPATCHES - 1)] = N - totSoFar;
+    *ipt = myRound((p1 * p1) * ((double) nInEachPatch[(nPATCHES - 1)]));
+    *(ipt + 1) = myRound((2.0 * p1 * (1.0 - p1)) * ((double) nInEachPatch[(nPATCHES - 1)]));
+    *(ipt + 2) = nInEachPatch[(nPATCHES - 1)] - (*ipt + (*(ipt + 1)));
+    
+    // /*  check test
+    fprintf(stdout, "\n%f\t%f\t%f\t%f\n", p0, q0, p1, q1);
+    ipt = genotypeCounts;
+    for ( i = 0; i < nPATCHES; i++ ) {
+        fprintf(stdout, "%i\t%i\t%i\t%i\t%i\n", *ipt, *(ipt+1), *(ipt+2), (*ipt + *(ipt+1) + *(ipt+2)), nInEachPatch[i]);
+        ipt += 3;
+    }
+    // end check test */
+    
+}
+
+
+double
+singleLocusEquilibrium(double s, double m)
+{
+    // see Mathematica notebook for solution
+    return (  (m * (0.5 + 0.75 * s) - 0.125 * s - 0.125 * sqrt(pow(s,2) - 4 * m * pow(s,2) + 4 * pow(m,2) * pow((2 + s),2)))/((-0.25 + m) * s)  );
 }
 
 

@@ -1,3 +1,4 @@
+codeVersion = sle_1.0
 BURN_IN_PERIOD = 20000;
 DIM = 1;
 DETERMINISTIC = 1;
@@ -15,8 +16,6 @@ S_COEFF = 2.000000E-02;
 TWO_DEME = 1;
 TS_RECORDING_FREQ = 500;
 
-N = 0;
-
+N = 5000;
 t = 520000;
-
 nSamplesGot = 1000;
