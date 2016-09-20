@@ -74,8 +74,8 @@ int getAndSetRNGseed(void);
 void migration(int *genotypeCounts, int *nInEachPatch);
 void parseCommandLine(int argc, char *argv[], char *progname);
 void printParametersToFile(long int t, int nSamplesGot, int seed);
-void recordData(long int t);
-void reproduction(int *genotypeCounts, double *fitnesses, int *nInEachPatch);
+void recordData(long int t, _Bool fixation, int nSamplesGot);
+_Bool reproduction(int *genotypeCounts, double *fitnesses, int *nInEachPatch);
 int myRound(double x);
 int seed_gen(void);
 void setUpPopulationAndDataFiles(int *genotypeCounts, int *nInEachPatch, double *fitnesses);
@@ -106,15 +106,16 @@ main(int argc, char *argv[])
     // main loop of work
     int nSamplesGot = 0;
     long int t = 0;
+    _Bool fixation;
     do {
         
         t++;            // increment generation
         migration( genotypeCounts, nInEachPatch );
-        reproduction( genotypeCounts, fitnesses, nInEachPatch ); // according to fitness; soft selection
+        fixation = reproduction( genotypeCounts, fitnesses, nInEachPatch ); // according to fitness; soft selection
         
-        if ( ((t % TS_RECORDING_FREQ) == 0) && (t > BURN_IN_PERIOD) ) {
-            recordData( t );
+        if ( (((t % TS_RECORDING_FREQ) == 0) && (t > BURN_IN_PERIOD)) || fixation ) {
             nSamplesGot++;
+            recordData( t, fixation, nSamplesGot );
         }
         
     } while ( nSamplesGot < nSAMPLES_TO_GET );
@@ -383,18 +384,20 @@ printParametersToFile(long int t, int nSamplesGot, int seed)
 
 
 void
-recordData(long int t)
+recordData(long int t, _Bool fixation, int nSamplesGot)
 {
     
 }
 
 
-void
+_Bool
 reproduction(int *genotypeCounts, double *fitnesses, int *nInEachPatch)
 {
     double fitnessWeights[nPATCHES][nGENOTYPES], *dpt, fitTotal, a, b, c;
+    double fAA, fAB, fBB, fvec[nGENOTYPES];
     int i, j, *ipt;
-    int newCounts[(nPATCHES * nGENOTYPES)];
+    unsigned int newCounts[nGENOTYPES];
+    _Bool fixation;
     
     ipt = genotypeCounts;
     dpt = fitnesses;
@@ -419,16 +422,49 @@ reproduction(int *genotypeCounts, double *fitnesses, int *nInEachPatch)
         b = fitnessWeights[i][1];
         c = fitnessWeights[i][2];
         
-        *ipt = myRound( ((a * a) + (a * b) + (0.25 * b * b)) * ((double) nInEachPatch[i]) );
-        *(ipt + 2) = myRound( ((0.25 * b * b) + (b * c) + (c * c)) * ((double) nInEachPatch[i]) );
-        *(ipt + 1) = nInEachPatch[i] - ( *ipt + (*(ipt + 2)) );
+        // these are EXPECTED proportions of genotypes of offspring if the genotypes mate randomly
+        fAA = (a * a) + (a * b) + (0.25 * b * b);
+        fBB = (0.25 * b * b) + (b * c) + (c * c);
+        fAB = 1.0 - (fAA + fBB);
+        fvec[0] = fAA;
+        fvec[1] = fAB;
+        fvec[2] = fBB;
+        
+        // (state, num outcomes, num trials, prob vec, results)
+        gsl_ran_multinomial( rngState, nGENOTYPES, nInEachPatch[i], fvec, newCounts );
+        for ( j = 0; j < nGENOTYPES; j++ )
+            *(ipt + j) = newCounts[j];
+        
+        /*
+        fprintf(stdout, "\nFitnesses:\n");
+        for ( j = 0; j < nGENOTYPES; j++ )
+            fprintf(stdout, "\t%f", *(dpt + j));
+        fprintf(stdout, "\nFitness weights:\n");
+        for ( j = 0; j < nGENOTYPES; j++ )
+            fprintf(stdout, "\t%f", fitnessWeights[i][j]);
+        fprintf(stdout, "\nNew counts:\n");
+        for ( j = 0; j < nGENOTYPES; j++ )
+            fprintf(stdout, "\t%i", newCounts[j]);
+        fprintf(stdout, "\n");
+        for ( j = 0; j < nGENOTYPES; j++ )
+            fprintf(stdout, "\t%i", *(ipt + j));
+        fprintf(stdout, "\n");
+        */
+        
+        // new allele frequencies:
+        
         
         // increment pointers:
         ipt += nGENOTYPES;
         dpt += nGENOTYPES;
     }
     
+    if ( ((*genotypeCounts + *(genotypeCounts + 3)) == N) || ((*(genotypeCounts + 2) + *(genotypeCounts + 5)) == N) )
+        fixation = 1;
+    else
+        fixation = 0;
     
+    return fixation;
 }
 
 
