@@ -69,12 +69,14 @@ int nSAMPLES_TO_GET = nSAMPLES_TO_GET_DEFAULT;
 int N;
 int nPATCHES;
 
+FILE *AlleleFreqTS;
+
 // functions
 int getAndSetRNGseed(void);
 void migration(int *genotypeCounts, int *nInEachPatch);
 void parseCommandLine(int argc, char *argv[], char *progname);
 void printParametersToFile(long int t, int nSamplesGot, int seed);
-void recordData(long int t, _Bool fixation, int nSamplesGot);
+void recordData(long int t, _Bool fixation, int nSamplesGot, int *genotypeCounts, int *nInEachPatch, int seed);
 _Bool reproduction(int *genotypeCounts, double *fitnesses, int *nInEachPatch);
 int myRound(double x);
 int seed_gen(void);
@@ -115,10 +117,10 @@ main(int argc, char *argv[])
         
         if ( (((t % TS_RECORDING_FREQ) == 0) && (t > BURN_IN_PERIOD)) || fixation ) {
             nSamplesGot++;
-            recordData( t, fixation, nSamplesGot );
+            recordData( t, fixation, nSamplesGot, genotypeCounts, nInEachPatch, seed );
         }
         
-    } while ( nSamplesGot < nSAMPLES_TO_GET );
+    } while ( (nSamplesGot < nSAMPLES_TO_GET) && !fixation );
     
     // record metadata:
     printParametersToFile(t, nSamplesGot, seed);
@@ -131,6 +133,8 @@ main(int argc, char *argv[])
         ipt += nGENOTYPES;
     }
     // end check test */
+    
+    fclose(AlleleFreqTS);
     
     return 0;
 }
@@ -355,8 +359,8 @@ printParametersToFile(long int t, int nSamplesGot, int seed)
     
     pp = fopen("parameters.m", "w"); // plain text; ready to read by MATLAB
     
-    fprintf(pp, "codeVersion = %s\n", version);
-    fprintf(pp, "RnumSeed = %i\n", seed);
+    fprintf(pp, "codeVersion = '%s';\n", version);
+    fprintf(pp, "RnumSeed = %i;\n", seed);
     
     fprintf(pp, "BURN_IN_PERIOD = %i;\n", BURN_IN_PERIOD);
     fprintf(pp, "DIM = %i;\n", DIM);
@@ -384,8 +388,39 @@ printParametersToFile(long int t, int nSamplesGot, int seed)
 
 
 void
-recordData(long int t, _Bool fixation, int nSamplesGot)
+recordData(long int t, _Bool fixation, int nSamplesGot, int *genotypeCounts, int *nInEachPatch, int seed)
 {
+    double p, q, pvec[nPATCHES], qvec[nPATCHES];
+    int *ipt, i, j, totDerivedCount = 0, derivedCountByPatch[nPATCHES];
+    
+    if ( fixation ) {
+        
+    }
+    else {
+        ipt = genotypeCounts;
+        for ( i = 0; i < nPATCHES; i++ ) {
+            derivedCountByPatch[i] = *(ipt + 1) + (2 * (*(ipt + 2)));
+            totDerivedCount += derivedCountByPatch[i];
+            qvec[i] = ((double) derivedCountByPatch[i]) / ((double) (2 * nInEachPatch[i]));
+            pvec[i] = 1.0 - qvec[i];
+            ipt += nGENOTYPES;
+        }
+        q = ((double) totDerivedCount) / ((double) (2 * N));
+        p = 1.0 - q;
+        if ( q > 1.0 || q < 0.0 || p > 1.0 || p < 0.0 ) {
+            fprintf(stderr, "\nError in recordData():\n\tp (%f) or q (%f) out of bounds!\n", p, q);
+            exit(-1);
+        }
+    }
+    // time, fixation, s, m, RnumSeed, nSamplesGot, q, q[0], q[1], cline width
+    fprintf(AlleleFreqTS, "%li %i %E %E %i %i %E", t, fixation, S_COEFF, SD_MOVE, seed, nSamplesGot, q);
+    for ( i = 0; i < nPATCHES; i++ )
+        fprintf(AlleleFreqTS, " %E", qvec[i]);
+    if ( fixation )
+        fprintf(AlleleFreqTS, " NaN\n");
+    else
+        fprintf(AlleleFreqTS, " %E\n", fabs( 1.0/(qvec[1] - qvec[0]) ) );
+    
     
 }
 
@@ -393,7 +428,7 @@ recordData(long int t, _Bool fixation, int nSamplesGot)
 _Bool
 reproduction(int *genotypeCounts, double *fitnesses, int *nInEachPatch)
 {
-    double fitnessWeights[nPATCHES][nGENOTYPES], *dpt, fitTotal, a, b, c;
+    double fitnessWeights[nGENOTYPES], *dpt, fitTotal, a, b, c;
     double fAA, fAB, fBB, fvec[nGENOTYPES];
     int i, j, *ipt;
     unsigned int newCounts[nGENOTYPES];
@@ -406,21 +441,21 @@ reproduction(int *genotypeCounts, double *fitnesses, int *nInEachPatch)
         fitTotal = 0.0;
         // calculate raw weights:
         for ( j = 0; j < nGENOTYPES; j++ ) {
-            fitnessWeights[i][j] = ((double) *(ipt + j)) * (*(dpt + j));
-            fitTotal += fitnessWeights[i][j];
+            fitnessWeights[j] = ((double) *(ipt + j)) * (*(dpt + j));
+            fitTotal += fitnessWeights[j];
         }
         // normalize to sum to one to make them probabilities:
         for ( j = 0; j < nGENOTYPES; j++ )
-            fitnessWeights[i][j] = fitnessWeights[i][j] / fitTotal;
+            fitnessWeights[j] = fitnessWeights[j] / fitTotal;
         
         if ( nGENOTYPES > 3 ) {
-            fprintf(stderr, "\nError in reproduction: scheme assumes three genotypes total!  Sorry!\n");
+            fprintf(stderr, "\nError in reproduction(): scheme assumes three genotypes total!  Sorry!\n");
             exit(-1);
         }
         
-        a = fitnessWeights[i][0];
-        b = fitnessWeights[i][1];
-        c = fitnessWeights[i][2];
+        a = fitnessWeights[0];
+        b = fitnessWeights[1];
+        c = fitnessWeights[2];
         
         // these are EXPECTED proportions of genotypes of offspring if the genotypes mate randomly
         fAA = (a * a) + (a * b) + (0.25 * b * b);
@@ -566,6 +601,13 @@ setUpPopulationAndDataFiles(int *genotypeCounts, int *nInEachPatch, double *fitn
     fitnesses[3] = 1.0;
     fitnesses[4] = 1.0 + ( H * S_COEFF );
     fitnesses[5] = 1.0 + S_COEFF;
+    
+    // data files
+    AlleleFreqTS = fopen("AlleleFreqTS.txt", "w");
+    fprintf(AlleleFreqTS, "time fixation s m RnumSeed nSamplesGot qGlobal");
+    for ( i = 0; i < nPATCHES; i++ )
+        fprintf(AlleleFreqTS, " q%i", i);
+    fprintf(AlleleFreqTS, " clineWidth\n");
     
 }
 
