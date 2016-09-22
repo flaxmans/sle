@@ -1,6 +1,6 @@
 codeVersion = 'sle_1.0';
-RnumSeed = 737165230;
-BURN_IN_PERIOD = 20000;
+RnumSeed = 737171431;
+BURN_IN_PERIOD = 100;
 DIM = 1;
 DETERMINISTIC = 1;
 FIXED_N = 1;
@@ -15,8 +15,8 @@ PATCHES = 2;
 nPATCHES = 2;
 S_COEFF = 2.000000E-02;
 TWO_DEME = 1;
-TS_RECORDING_FREQ = 500;
+TS_RECORDING_FREQ = 100;
 
 N = 5000;
-t = 96069;
-nSamplesGot = 153;
+t = 8377;
+nSamplesGot = 84;

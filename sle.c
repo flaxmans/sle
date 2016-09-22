@@ -115,7 +115,7 @@ main(int argc, char *argv[])
         migration( genotypeCounts, nInEachPatch );
         fixation = reproduction( genotypeCounts, fitnesses, nInEachPatch ); // according to fitness; soft selection
         
-        if ( (((t % TS_RECORDING_FREQ) == 0) && (t > BURN_IN_PERIOD)) || fixation ) {
+        if ( (((t % TS_RECORDING_FREQ) == 0) && (t >= BURN_IN_PERIOD)) || fixation ) {
             nSamplesGot++;
             recordData( t, fixation, nSamplesGot, genotypeCounts, nInEachPatch, seed );
         }
@@ -392,36 +392,59 @@ recordData(long int t, _Bool fixation, int nSamplesGot, int *genotypeCounts, int
 {
     double p, q, pvec[nPATCHES], qvec[nPATCHES];
     int *ipt, i, j, totDerivedCount = 0, derivedCountByPatch[nPATCHES];
+    double Ndoub, HS, HT, FST;
+    Ndoub = ((double) N);
     
-    if ( fixation ) {
-        
-    }
-    else {
-        ipt = genotypeCounts;
-        for ( i = 0; i < nPATCHES; i++ ) {
-            derivedCountByPatch[i] = *(ipt + 1) + (2 * (*(ipt + 2)));
-            totDerivedCount += derivedCountByPatch[i];
+    
+    ipt = genotypeCounts;
+    for ( i = 0; i < nPATCHES; i++ ) {
+        derivedCountByPatch[i] = *(ipt + 1) + (2 * (*(ipt + 2)));
+        totDerivedCount += derivedCountByPatch[i];
+        if ( derivedCountByPatch[i] == 0 ) {
+            qvec[i] = 0.0;
+            pvec[i] = 1.0;
+        }
+        else if ( derivedCountByPatch[i] == ( 2 * nInEachPatch[i] ) ) {
+            qvec[i] = 1.0;
+            pvec[i] = 0.0;
+        }
+        else {
             qvec[i] = ((double) derivedCountByPatch[i]) / ((double) (2 * nInEachPatch[i]));
             pvec[i] = 1.0 - qvec[i];
-            ipt += nGENOTYPES;
         }
-        q = ((double) totDerivedCount) / ((double) (2 * N));
-        p = 1.0 - q;
-        if ( q > 1.0 || q < 0.0 || p > 1.0 || p < 0.0 ) {
-            fprintf(stderr, "\nError in recordData():\n\tp (%f) or q (%f) out of bounds!\n", p, q);
-            exit(-1);
-        }
+        ipt += nGENOTYPES;
     }
-    // time, fixation, s, m, RnumSeed, nSamplesGot, q, q[0], q[1], cline width
+    if ( totDerivedCount == 0 ) {
+        q = 0.0;
+        p = 1.0;
+    }
+    else if ( totDerivedCount == (2 * N) ) {
+        q = 1.0;
+        p = 0.0;
+    }
+    else {
+        q = ((double) totDerivedCount) / (2.0 * Ndoub);
+        p = 1.0 - q;
+    }
+    if ( q > 1.0 || q < 0.0 || p > 1.0 || p < 0.0 ) {
+        fprintf(stderr, "\nError in recordData():\n\tp (%f) or q (%f) out of bounds!\n", p, q);
+        exit(-1);
+    }
+    
+    // time, fixation, s, m, RnumSeed, nSamplesGot, q, q[0], q[1], cline width, FST
     fprintf(AlleleFreqTS, "%li %i %E %E %i %i %E", t, fixation, S_COEFF, SD_MOVE, seed, nSamplesGot, q);
     for ( i = 0; i < nPATCHES; i++ )
         fprintf(AlleleFreqTS, " %E", qvec[i]);
     if ( fixation )
-        fprintf(AlleleFreqTS, " NaN\n");
-    else
-        fprintf(AlleleFreqTS, " %E\n", fabs( 1.0/(qvec[1] - qvec[0]) ) );
-    
-    
+        fprintf(AlleleFreqTS, " NaN NaN\n");
+    else {
+        HT = 2.0 * p * q;
+        HS = 0.0;
+        for ( i = 0; i < nPATCHES; i++ )
+            HS += (((double) nInEachPatch[i]) / Ndoub) * 2.0 * pvec[i] * qvec[i]; // weighted average
+        FST = (HT - HS)/HT;
+        fprintf(AlleleFreqTS, " %E %E\n", fabs( 1.0/(qvec[1] - qvec[0]) ), FST );
+    }
 }
 
 
@@ -607,7 +630,7 @@ setUpPopulationAndDataFiles(int *genotypeCounts, int *nInEachPatch, double *fitn
     fprintf(AlleleFreqTS, "time fixation s m RnumSeed nSamplesGot qGlobal");
     for ( i = 0; i < nPATCHES; i++ )
         fprintf(AlleleFreqTS, " q%i", i);
-    fprintf(AlleleFreqTS, " clineWidth\n");
+    fprintf(AlleleFreqTS, " clineWidth FST\n");
     
 }
 
