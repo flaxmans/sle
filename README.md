@@ -29,6 +29,31 @@ Even though the file has equals signs rather than the R assignment operator <br>
 
 * RnumSeed.txt: the random number seed used to initialize the RNG.
 
+* AlleleFreqTS.txt: this the data output.  This is a space-delimited, plain-text file, with the following header row indicating the columns of data present: time, fixation, s, m, RnumSeed, nSamplesGot, qGlobal, q0, q1, clineWidth, FST, which correspond to the following quantities:
+
+	1. time = generation sample was taken
+
+	2. fixation = 1 if this time sample corresponded to when one allele fixed; = 0 otherwise.
+	
+	3.  s = selection coefficient
+	
+	4.  m = migration rate between two demes
+	
+	5.  RnumSeed = value of random number seed used to seed the RNG (gsl)
+	
+	6.  nSamplesGot = integer (n) indicating that this is the nth sample from this particular simulation run
+	
+	7.  qGlobal = global frequency (i.e, both demes combined) of the allele that is best in deme 1. (demes are referred to as "deme 0" and "deme 1")
+	
+	8. q0 = frequency of allele in deme 0
+	
+	9. q1 = frequency of allele in deme 1
+	
+	10. clineWidth = 1 / (q1 - q0)
+	
+	11. FST = fixation index, computed as (HT - HS)/HT
+
+
 
 
 
