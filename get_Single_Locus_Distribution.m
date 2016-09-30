@@ -19,7 +19,7 @@ for i = 1:n
     
     wi = indexes(i);
     
-    data = importdata(['../sle_tests/sle_test' num2str(wi) '/AlleleFreqTS.txt']);
+    data = importdata(['../sle_data/sle_test' num2str(wi) '/AlleleFreqTS.txt']);
     data = data.data;
     
     qGlobal = data(:,7);
