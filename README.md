@@ -7,7 +7,7 @@ This is a fast tool for generating samples of the stochastic trajectory of a sin
 ____________________
 ###System requirements
 * gcc (C compiler)
-* GNU Scientific Library
+* GNU Scientific Library (henceforth 'gsl')
 * a Linux/UNIX-style terminal (or terminal emulator)
 
 ### Compiling the program
@@ -15,7 +15,7 @@ The program can be compiled from source with the following command (in a Linux/U
 
 	$ gcc -lm -I/usr/local/include/gsl -L/usr/local/lib -lgsl -lgslcblas -O3 sle.c -o sle
 
-For convenience, this command is also given in the file 'compileCommand.txt' in this repository.
+For convenience, this command is also given in the file 'compileCommand.txt' in this repository.  Note that this command assumes that you have the appropriate gsl files in the paths named in the command (e.g., the gsl header files are assumed to be in /usr/local/include/gsl/).
 
 
 ###Explantion of data and metadata files
